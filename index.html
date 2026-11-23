@@ -1,0 +1,415 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ultimate Tower Defence 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101827;color:white;font-family:Arial}
+header{padding:12px;background:#17243a;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+h2{margin:8px 0;color:#8de5ff}
+button,select{background:#263b56;color:white;border:1px solid #526c89;padding:9px;border-radius:7px;cursor:pointer}
+button:hover{background:#39759b}
+#layout{display:grid;grid-template-columns:220px 1fr 220px;gap:10px;padding:10px}
+.panel{background:#19283d;padding:12px;border-radius:10px;overflow:auto;max-height:78vh}
+#game{width:100%;height:72vh;min-height:450px;border-radius:10px;overflow:hidden;background:#182b29}
+.item{padding:8px;margin:5px 0;background:#263b56;border-radius:6px;cursor:pointer;font-size:13px}
+.item.active{outline:2px solid #54e7ff;background:#315776}
+.small{font-size:12px;color:#b7c8d8}
+#message{color:#8de5ff;min-height:25px}
+@media(max-width:850px){#layout{grid-template-columns:1fr}#game{height:55vh}.panel{max-height:none}}
+</style>
+</head>
+<body>
+<header>
+ <div><h2>⚔ ULTIMATE TOWER DEFENCE 3D</h2>
+ <span class="small">Defend your base. Survive the waves.</span></div>
+ <div>
+ $<span id="money">500</span> |
+ ❤️ <span id="lives">20</span> |
+ Wave <span id="wave">0</span>
+ </div>
+ <div>
+ <select id="map">
+ <option value="forest">Enchanted Forest</option>
+ <option value="desert">Desert Kingdom</option>
+ <option value="snow">Frozen Mountains</option>
+ </select>
+ <select id="difficulty">
+ <option value="easy">Easy</option>
+ <option value="normal" selected>Normal</option>
+ <option value="hard">Hard</option>
+ <option value="nightmare">Nightmare</option>
+ </select>
+ <button onclick="startGame()">New Game</button>
+ <button onclick="startWave()">Start Wave</button>
+ </div>
+</header>
+<div id="layout">
+ <section class="panel">
+ <h3>🏰 Towers</h3>
+ <div id="towers"></div>
+ <p class="small">Select a tower, then click an open spot on the map to build it.</p>
+ </section>
+ <main>
+ <div id="game"></div>
+ <p id="message">Choose a tower and build your defence!</p>
+ <button onclick="toggleSpeed()">Speed: <span id="speed">1x</span></button>
+ <button onclick="upgradeSelected()">Upgrade selected</button>
+ <button onclick="sellSelected()">Sell selected</button>
+ </main>
+ <section class="panel">
+ <h3>👹 Enemy database</h3>
+ <div id="enemies"></div>
+ <hr>
+ <h3>📊 Selected tower</h3>
+ <div id="details">No tower selected</div>
+ <hr>
+ <h3>🎯 Controls</h3>
+ <p class="small">Click a tower to inspect it. Click an empty buildable tile to place your selected tower. Start waves to earn rewards.</p>
+ </section>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
+
+const towerData=[
+['Archer',100,15,1.0,4,'arrow'],
+['Cannon',180,45,2.2,3,'splash'],
+['Sniper',220,100,3.5,9,'sniper'],
+['Machine Gun',250,7,.18,4,'rapid'],
+['Ice Tower',160,9,1.1,3,'slow'],
+['Fire Tower',200,20,.8,3,'burn'],
+['Tesla Tower',280,35,1.5,4,'chain'],
+['Poison Tower',190,8,.9,3,'poison'],
+['Laser Tower',350,28,.3,5,'laser'],
+['Mortar',300,65,3,7,'splash'],
+['Missile Tower',400,75,2.5,7,'homing'],
+['Magic Tower',260,32,1.1,5,'pierce'],
+['Frost Mage',310,18,1.5,4,'freeze'],
+['Plasma Tower',450,90,2.2,6,'plasma'],
+['Bank Tower',150,0,0,0,'bank']
+];
+const enemyData=[
+['Grunt',40,1.0,1,'normal'],
+['Runner',25,2.1,1,'normal'],
+['Brute',180,.6,2,'normal'],
+['Armoured Knight',250,.65,3,'armour'],
+['Bat',35,1.7,1,'flying'],
+['Healer',110,.8,2,'heal'],
+['Shield Bearer',160,.8,2,'shield'],
+['Splitter',100,1.1,2,'split'],
+['Regenerator',130,.8,2,'regen'],
+['Shadow',80,1.6,1,'stealth'],
+['Bomber',75,1.3,2,'explode'],
+['Fire Demon',220,1.0,3,'fire'],
+['Ice Giant',450,.45,5,'boss'],
+['War Machine',700,.55,6,'boss'],
+['Dark Lord',1800,.7,10,'boss']
+];
+const difficulty={easy:.65,normal:1,hard:1.65,nightmare:2.5};
+let scene,camera,renderer,clock;
+let towers=[],enemies=[],shots=[],tiles=[];
+let money=500,lives=20,wave=0,selected=-1;
+let chosen=0,running=false,speed=1,spawnLeft=0,spawnTimer=0;
+let path=[],mapType='forest',factor=1;
+let ground,raycaster=new THREE.Raycaster(),mouse=new THREE.Vector2();
+const root=document.getElementById('game');
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x8bb6c3);
+ scene.fog=new THREE.Fog(0x8bb6c3,25,65);
+ camera=new THREE.PerspectiveCamera(43,root.clientWidth/root.clientHeight,.1,100);
+ camera.position.set(0,18,21);
+ camera.lookAt(0,0,0);
+ renderer=new THREE.WebGLRenderer({antialias:true});
+ renderer.setSize(root.clientWidth,root.clientHeight);
+ renderer.shadowMap.enabled=true;
+ root.innerHTML='';
+ root.appendChild(renderer.domElement);
+ scene.add(new THREE.HemisphereLight(0xffffff,0x405040,2));
+ const light=new THREE.DirectionalLight(0xffffff,2);
+ light.position.set(-8,18,10);
+ light.castShadow=true;scene.add(light);
+ clock=new THREE.Clock();
+ buildMap();
+ renderer.domElement.addEventListener('pointerdown',clickMap);
+ window.addEventListener('resize',resize);
+ animate();
+}
+function resize(){
+ if(!renderer)return;
+ camera.aspect=root.clientWidth/root.clientHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(root.clientWidth,root.clientHeight);
+}
+function box(x,y,z,color,sx=1,sy=1,sz=1){
+ let m=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),new THREE.MeshStandardMaterial({color}));
+ m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;
+}
+function buildMap(){
+ scene.children.filter(o=>o.userData.gameObject).forEach(o=>scene.remove(o));
+ towers.forEach(t=>scene.remove(t.mesh));
+ enemies.forEach(e=>scene.remove(e.mesh));
+ shots.forEach(s=>scene.remove(s.mesh));
+ towers=[];enemies=[];shots=[];tiles=[];
+ mapType=document.getElementById('map').value;
+ const colors={forest:0x47844c,desert:0xc4a35b,snow:0xb7dce8};
+ const color=colors[mapType];
+ ground=new THREE.Mesh(new THREE.PlaneGeometry(22,18),
+ new THREE.MeshStandardMaterial({color}));
+ ground.rotation.x=-Math.PI/2;ground.position.y=-.12;
+ ground.userData.gameObject=true;scene.add(ground);
+ path=mapType==='forest'?
+ [[-10,-6],[-5,-6],[-5,1],[2,1],[2,-5],[8,-5],[8,5],[10,5]]:
+ mapType==='desert'?
+ [[-10,5],[-6,5],[-6,-3],[0,-3],[0,4],[6,4],[6,-5],[10,-5]]:
+ [[-10,-5],[-7,-5],[-7,4],[-2,4],[-2,-4],[4,-4],[4,5],[10,5]];
+ const points=[];
+ path.forEach(p=>points.push(new THREE.Vector3(p[0],.04,p[1])));
+ const curve=new THREE.CatmullRomCurve3(points);
+ const road=new THREE.Mesh(new THREE.TubeGeometry(curve,100,.65,8,false),
+ new THREE.MeshStandardMaterial({color:0x665544}));
+ road.userData.gameObject=true;scene.add(road);
+ for(let x=-10;x<=10;x++)for(let z=-8;z<=8;z++){
+ const blocked=curve.getPoints(100).some(p=>Math.hypot(p.x-x,p.z-z)<1);
+ if(!blocked){
+ let tile=new THREE.Mesh(new THREE.BoxGeometry(.85,.08,.85),
+ new THREE.MeshStandardMaterial({color:0x789d69,transparent:true,opacity:.65}));
+ tile.position.set(x,-.04,z);tile.userData={gameObject:true,x,z};
+ scene.add(tile);tiles.push(tile);
+ }
+ }
+ let base=box(10,.5,5,0x3399ff,1.5,1,1.5);
+ base.userData.gameObject=true;
+}
+function model(type){
+ let g=new THREE.Group();
+ let colors=[0xc08a45,0x777777,0x527fa9,0x444444,0x72ccee,
+ 0xe76b30,0x33ddff,0x669933,0x55aaff,0x775533,
+ 0xaaaaaa,0x9955ee,0x88ddff,0x22aaff,0x9955bb];
+ let color=colors[type];
+ let base=new THREE.Mesh(new THREE.CylinderGeometry(.42,.55,.35,8),
+ new THREE.MeshStandardMaterial({color:0x454d59}));
+ g.add(base);
+ let body=new THREE.Mesh(new THREE.CylinderGeometry(.23,.34,.75,8),
+ new THREE.MeshStandardMaterial({color}));
+ body.position.y=.55;g.add(body);
+ let head=new THREE.Mesh(new THREE.SphereGeometry(.23,12,10),
+ new THREE.MeshStandardMaterial({color:0xe7c5a0}));
+ head.position.y=1.05;g.add(head);
+ let barrel=new THREE.Mesh(new THREE.CylinderGeometry(.09,.12,.8,8),
+ new THREE.MeshStandardMaterial({color:0x252b35}));
+ barrel.rotation.x=Math.PI/2;barrel.position.set(0,.8,-.45);g.add(barrel);
+ return g;
+}
+function addTower(type,x,z){
+ let d=towerData[type];
+ if(money<d[1]){say('Not enough money!');return}
+ if(type!==14 && towers.some(t=>Math.hypot(t.x-x,t.z-z)<.8))return;
+ money-=d[1];
+ let mesh=model(type);
+ mesh.position.set(x,0,z);scene.add(mesh);
+ towers.push({type,x,z,mesh,level:1,cool:0,kills:0});
+ selected=towers.length-1;refresh();
+}
+function addEnemy(type){
+ const d=enemyData[type],points=path.map(p=>new THREE.Vector3(p[0],.5,p[1]));
+ const curve=new THREE.CatmullRomCurve3(points);
+ let mesh=new THREE.Group();
+ let color=[0x888888,0xffdd33,0x884422,0xaaaaaa,0x9944bb,
+ 0x55dd88,0x55aaff,0xbb7733,0x55aa44,0x333344,
+ 0xff6633,0xdd4422,0x99ddff,0x444466,0x220033][type];
+ let body=new THREE.Mesh(new THREE.SphereGeometry(type>=12?.75:.38,12,10),
+ new THREE.MeshStandardMaterial({color}));
+ mesh.add(body);
+ let head=new THREE.Mesh(new THREE.SphereGeometry(.22,10,8),
+ new THREE.MeshStandardMaterial({color:0xffcc99}));
+ head.position.y=.4;mesh.add(head);
+ scene.add(mesh);
+ let hp=d[1]*factor*(1+wave*.14);
+ enemies.push({type,mesh,curve,t:0,hp,max:hp,
+ speed:d[2]*factor,attack:d[4],effect:0,attackTimer:0});
+}
+function damage(e,n){
+ if(!enemies.includes(e))return;
+ if(e.attack==='armour')n*=.7;
+ if(e.attack==='shield')n*=.65;
+ e.hp-=n;
+ if(e.hp<=0){
+ money+=15+e.type*2;
+ enemies=enemies.filter(x=>x!==e);
+ scene.remove(e.mesh);
+ }
+}
+function fire(t,e){
+ let d=towerData[t.type],level=t.level;
+ if(t.type===14)return;
+ let kind=d[5],damageValue=d[2]*level;
+ if(kind==='slow'||kind==='freeze')e.effect=kind==='freeze'?3:1.8;
+ if(kind==='burn'||kind==='poison')e.effect=2.5;
+ if(kind==='chain'){
+ enemies.filter(x=>Math.hypot(x.mesh.position.x-e.mesh.position.x,
+ x.mesh.position.z-e.mesh.position.z)<3).forEach(x=>damage(x,damageValue*.7));
+ }
+ else if(kind==='laser')damage(e,damageValue*.7);
+ else if(kind==='splash'||kind==='plasma'||kind==='homing'){
+ enemies.filter(x=>Math.hypot(x.mesh.position.x-e.mesh.position.x,
+ x.mesh.position.z-e.mesh.position.z)<1.8).forEach(x=>damage(x,damageValue*.65));
+ }
+ else if(kind==='burn'||kind==='poison'){
+ damage(e,damageValue*.6);
+ e.effectTimer=2.5;e.effectDamage=damageValue*.12;
+ }
+ else if(kind==='pierce'){
+ damage(e,damageValue);
+ let second=enemies.find(x=>x!==e&&Math.hypot(x.mesh.position.x-e.mesh.position.x,x.mesh.position.z-e.mesh.position.z)<2);
+ if(second)damage(second,damageValue*.5);
+ }
+ else damage(e,damageValue);
+ let color=kind==='slow'?0x44ddff:kind==='burn'?0xff5522:kind==='chain'?0x44ffff:0xffdd66;
+ let orb=new THREE.Mesh(new THREE.SphereGeometry(.12,8,8),
+ new THREE.MeshBasicMaterial({color}));
+ orb.position.copy(t.mesh.position);orb.position.y=1;
+ scene.add(orb);shots.push({mesh:orb,target:e});
+}
+function update(dt){
+ if(!running)return;
+ if(spawnLeft>0){
+ spawnTimer-=dt;
+ if(spawnTimer<=0){
+ let type=Math.min(14,Math.floor(Math.random()*Math.min(15,3+wave)));
+ if(wave%5===0&&spawnLeft===1)type=14;
+ addEnemy(type);spawnLeft--;spawnTimer=.65;
+ }
+ }
+ enemies.slice().forEach(e=>{
+ let slow=e.effect>0?.55:1;
+ e.t+=dt*e.speed*slow/Math.max(1,e.curve.getLength());
+ e.effect=Math.max(0,e.effect-dt);
+ if(e.effectTimer>0){
+ e.effectTimer-=dt;
+ damage(e,e.effectDamage*dt);
+ }
+ if(e.attack==='heal'){
+ e.attackTimer+=dt;
+ if(e.attackTimer>2){
+ enemies.filter(x=>x!==e&&Math.hypot(x.mesh.position.x-e.mesh.position.x,x.mesh.position.z-e.mesh.position.z)<2.5)
+ .forEach(x=>x.hp=Math.min(x.max,x.hp+4));
+ e.attackTimer=0;
+ }
+ }
+ if(e.attack==='explode'&&e.t>.75){lives-=2;e.t=2}
+ if(e.t>=1){
+ lives-=e.type>=12?3:1;
+ scene.remove(e.mesh);enemies=enemies.filter(x=>x!==e);
+ }
+ else e.mesh.position.copy(e.curve.getPoint(e.t));
+ });
+ towers.forEach(t=>{
+ if(t.type===14){
+ t.cool-=dt;
+ if(t.cool<=0){money+=12*t.level;t.cool=5}
+ return;
+ }
+ t.cool-=dt;
+ if(t.cool<=0){
+ let range=towerData[t.type][4]+t.level*.3;
+ let targets=enemies.filter(e=>Math.hypot(e.mesh.position.x-t.x,e.mesh.position.z-t.z)<range)
+ .sort((a,b)=>b.t-a.t);
+ if(targets.length){
+ let target=targets[0];
+ t.mesh.rotation.y=Math.atan2(target.mesh.position.x-t.x,target.mesh.position.z-t.z);
+ fire(t,target);t.cool=towerData[t.type][3]/(1+(t.level-1)*.18);
+ }
+ }
+ });
+ shots.forEach(s=>{
+ if(!enemies.includes(s.target)){scene.remove(s.mesh);return}
+ s.mesh.position.lerp(s.target.mesh.position,.15);
+ if(s.mesh.position.distanceTo(s.target.mesh.position)<.3)scene.remove(s.mesh);
+ });
+ shots=shots.filter(s=>s.mesh.parent);
+ if(spawnLeft===0&&enemies.length===0){
+ running=false;
+ say('Wave cleared! Press Start Wave for the next battle.');
+ }
+ if(lives<=0){running=false;lives=0;say('GAME OVER! Start a new game to try again.')}
+}
+function animate(){
+ requestAnimationFrame(animate);
+ let dt=Math.min(clock.getDelta(),.04)*speed;
+ update(dt);
+ renderer.render(scene,camera);
+ document.getElementById('money').textContent=Math.floor(money);
+ document.getElementById('lives').textContent=lives;
+ document.getElementById('wave').textContent=wave;
+}
+function clickMap(ev){
+ const r=renderer.domElement.getBoundingClientRect();
+ mouse.x=((ev.clientX-r.left)/r.width)*2-1;
+ mouse.y=-((ev.clientY-r.top)/r.height)*2+1;
+ raycaster.setFromCamera(mouse,camera);
+ let hits=raycaster.intersectObjects(scene.children,true);
+ if(!hits.length)return;
+ let obj=hits[0].object;
+ let towerIndex=towers.findIndex(t=>t.mesh===obj.parent||t.mesh===obj);
+ if(towerIndex>=0){selected=towerIndex;refresh();return}
+ let tile=tiles.find(t=>t===obj);
+ if(tile)addTower(chosen,tile.userData.x,tile.userData.z);
+}
+function startGame(){
+ money=500;lives=20;wave=0;running=false;
+ towers=[];enemies=[];shots=[];
+ factor=difficulty[document.getElementById('difficulty').value];
+ buildMap();refresh();say('New game started. Build your towers!');
+}
+function startWave(){
+ if(running||lives<=0)return;
+ wave++;running=true;
+ spawnLeft=8+wave*3;spawnTimer=0;
+ factor=difficulty[document.getElementById('difficulty').value];
+ say('Wave '+wave+' incoming!');
+}
+function upgradeSelected(){
+ let t=towers[selected];if(!t)return;
+ let cost= Math.floor(towerData[t.type][1]*(.65+t.level*.55));
+ if(money<cost){say('Not enough money to upgrade!');return}
+ money-=cost;t.level++;
+ say(towerData[t.type][0]+' upgraded to level '+t.level);
+ refresh();
+}
+function sellSelected(){
+ let t=towers[selected];if(!t)return;
+ money+=Math.floor(towerData[t.type][1]*.6);
+ scene.remove(t.mesh);towers.splice(selected,1);selected=-1;refresh();
+}
+function toggleSpeed(){
+ speed=speed===1?2:speed===2?3:1;
+ document.getElementById('speed').textContent=speed+'x';
+}
+function say(s){document.getElementById('message').textContent=s}
+function refresh(){
+ document.querySelectorAll('.item').forEach(x=>x.classList.remove('active'));
+ let items=document.querySelectorAll('#towers .item');
+ if(items[chosen])items[chosen].classList.add('active');
+ let t=towers[selected];
+ document.getElementById('details').innerHTML=t?
+ `${towerData[t.type][0]}<br>Level: ${t.level}<br>Kills: ${t.kills}<br>Damage: ${towerData[t.type][2]*t.level}`:'No tower selected';
+}
+function createLists(){
+ document.getElementById('towers').innerHTML=towerData.map((t,i)=>
+ `<div class="item" data-i="${i}">${i+1}. ${t[0]}<br><span class="small">Cost: $${t[1]} | Damage: ${t[2]} | Range: ${t[4]}</span></div>`).join('');
+ document.getElementById('enemies').innerHTML=enemyData.map((e,i)=>
+ `<div class="item">${e[0]}<br><span class="small">HP: ${e[1]} | Speed: ${e[2]} | Trait: ${e[4]}</span></div>`).join('');
+ document.querySelectorAll('#towers .item').forEach(el=>el.onclick=()=>{
+ chosen=Number(el.dataset.i);refresh();
+ say('Selected '+towerData[chosen][0]+'. Click a building tile.');
+ });
+}
+createLists();init();startGame();
+</script>
+</body>
+</html>
